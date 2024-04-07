@@ -45,10 +45,13 @@ def pipeline(
     lora_dim: int = 4,
     reward_model_learning_rate_multiplier: float = 1.0,
     reward_model_train_steps: int = 1000,
+    eval_dataset: Optional[str] = None,
     instruction: Optional[str] = None,
     project: str = _placeholders.PROJECT_ID_PLACEHOLDER,
+    accelerator_type: str = 'GPU',
     location: str = _placeholders.LOCATION_PLACEHOLDER,
-    tensorboard_resource_id: Optional[str] = None,
+    tensorboard_resource_id: str = '',
+    encryption_spec_key_name: str = '',
 ) -> PipelineOutput:
   # fmt: off
   """Trains a reward model.
@@ -64,8 +67,10 @@ def pipeline(
     reward_model_train_steps: Number of steps to use when training a reward model. Default value is 1000.
     instruction: This field lets the model know what task it needs to perform. Base models have been trained over a large set of varied instructions. You can give a simple and intuitive description of the task and the model will follow it, e.g. "Classify this movie review as positive or negative" or "Translate this sentence to Danish". Do not specify this if your dataset already prepends the instruction to the inputs field.
     project: Project used to run custom jobs. If not specified the project used to run the pipeline will be used.
-    location: Location used to run custom jobs. If not specified the location used to run the pipeline will be used.
+    accelerator_type: One of 'TPU' or 'GPU'. If 'TPU' is specified, tuning components run in europe-west4. Otherwise tuning components run in us-central1 on GPUs. Default is 'GPU'.
+    location: Location used to run non-tuning components, i.e. components that do not require accelerators. If not specified the location used to run the pipeline will be used.
     tensorboard_resource_id: Optional tensorboard resource id in format `projects/{project_number}/locations/{location}/tensorboards/{tensorboard_id}`. If provided, tensorboard metrics will be uploaded to this location.
+    encryption_spec_key_name: Customer-managed encryption key. If this is set, then all resources created by the CustomJob will be encrypted with the provided encryption key. Note that this is not supported for TPU at the moment.
 
   Returns:
     reward_model_base_path: Path to the base model used by the reward model.
@@ -77,7 +82,8 @@ def pipeline(
   candidate_columns = ['candidate_0', 'candidate_1']
   choice_column = 'choice'
   machine_spec = function_based.resolve_machine_spec(
-      location=location, use_test_spec=env.get_use_test_machine_spec()
+      accelerator_type=accelerator_type,
+      use_test_spec=env.get_use_test_machine_spec(),
   ).set_display_name('Resolve Machine Spec')
 
   reference_model_metadata = function_based.resolve_reference_model_metadata(
@@ -93,9 +99,6 @@ def pipeline(
       ).set_display_name('Preprocess Prompt Dataset')
   )
 
-  preference_dataset_image_uri = function_based.resolve_private_image_uri(
-      image_name='text_comparison_importer'
-  ).set_display_name('Resolve Preference Dataset Image URI')
   comma_separated_candidates_field_names = (
       function_based.convert_to_delimited_string(items=candidate_columns)
   )
@@ -113,17 +116,34 @@ def pipeline(
           large_model_reference=reference_model_metadata.outputs[
               'reward_model_reference'
           ],
-          image_uri=preference_dataset_image_uri.output,
           instruction=instruction,
+          encryption_spec_key_name=encryption_spec_key_name,
       )
       .set_display_name('Import Preference Dataset')
       .set_caching_options(False)
   )
 
-  reward_model_image_uri = function_based.resolve_private_image_uri(
-      image_name='reward_model',
+  preference_eval_dataset_importer = (
+      private_text_comparison_importer.private_text_comparison_importer(
+          project=project,
+          location=location,
+          input_text=eval_dataset,
+          inputs_field_name=prompt_column,
+          comma_separated_candidates_field_names=comma_separated_candidates_field_names.output,
+          choice_field_name=choice_column,
+          split=env.TRAIN_SPLIT,
+          large_model_reference=reference_model_metadata.outputs[
+              'reward_model_reference'
+          ],
+          instruction=instruction,
+          encryption_spec_key_name=encryption_spec_key_name,
+      )
+      .set_display_name('Import Preference Eval Dataset')
+      .set_caching_options(False)
+  )
+
+  reward_model_image_uri = function_based.resolve_private_refined_image_uri(
       accelerator_type=machine_spec.outputs['accelerator_type'],
-      accelerator_count=machine_spec.outputs['accelerator_count'],
   ).set_display_name('Resolve Reward Model Image URI')
   num_microbatches = function_based.resolve_num_microbatches(
       large_model_reference=reference_model_metadata.outputs[
@@ -133,11 +153,14 @@ def pipeline(
   reward_model = (
       reward_model_trainer.reward_model_trainer(
           project=project,
-          location=location,
+          location=machine_spec.outputs['tuning_location'],
           input_model_path=reference_model_metadata.outputs[
               'reward_model_path'
           ],
           input_dataset_path=preference_dataset_importer.outputs[
+              'output_dataset_path'
+          ],
+          eval_dataset_path=preference_eval_dataset_importer.outputs[
               'output_dataset_path'
           ],
           train_steps=reward_model_train_steps,
@@ -154,27 +177,13 @@ def pipeline(
           learning_rate_multiplier=reward_model_learning_rate_multiplier,
           lora_dim=lora_dim,
           num_microbatches=num_microbatches.output,
+          encryption_spec_key_name=encryption_spec_key_name,
+          tensorboard_resource_id=tensorboard_resource_id,
       )
       .set_display_name('Reward Model Trainer')
       .set_caching_options(False)
   )
 
-  has_tensorboard_id = function_based.value_exists(
-      value=tensorboard_resource_id
-  ).set_display_name('Resolve TensorBoard Resource ID')
-  with kfp.dsl.Condition(  # pytype: disable=wrong-arg-types
-      has_tensorboard_id.output == True,  # pylint: disable=singleton-comparison, g-explicit-bool-comparison
-      name='Upload Reward Model TensorBoard Metrics',
-  ):
-    _ = upload_tensorboard_metrics.upload_tensorboard_metrics(
-        tensorboard_resource_id=tensorboard_resource_id,
-        metrics_directory=reward_model.outputs['tensorboard_metrics'],
-        experiment_name=(
-            'reward-model-tuner-'
-            f'{kfp.dsl.PIPELINE_JOB_ID_PLACEHOLDER}-'
-            f'{kfp.dsl.PIPELINE_TASK_ID_PLACEHOLDER}'
-        ),
-    ).set_display_name('Reward Model TensorBoard Metrics Uploader')
   return PipelineOutput(
       reward_model_base_path=reference_model_metadata.outputs[
           'reward_model_path'

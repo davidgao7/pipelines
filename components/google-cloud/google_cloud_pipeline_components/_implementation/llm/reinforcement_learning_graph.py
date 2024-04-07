@@ -51,8 +51,10 @@ def pipeline(
     kl_coeff: float = 0.1,
     instruction: Optional[str] = None,
     project: str = _placeholders.PROJECT_ID_PLACEHOLDER,
+    accelerator_type: str = 'GPU',
     location: str = _placeholders.LOCATION_PLACEHOLDER,
-    tensorboard_resource_id: Optional[str] = None,
+    tensorboard_resource_id: str = '',
+    encryption_spec_key_name: str = '',
 ) -> PipelineOutput:
   # fmt: off
   """Trains a reward model.
@@ -72,8 +74,10 @@ def pipeline(
     kl_coeff: Coefficient for KL penalty. This regularizes the policy model and penalizes if it diverges from its initial distribution. If set to 0, the reference language model is not loaded into memory. Default value is 0.1.
     instruction: This field lets the model know what task it needs to perform. Base models have been trained over a large set of varied instructions. You can give a simple and intuitive description of the task and the model will follow it, e.g. "Classify this movie review as positive or negative" or "Translate this sentence to Danish". Do not specify this if your dataset already prepends the instruction to the inputs field.
     project: Project used to run custom jobs. If not specified the project used to run the pipeline will be used.
-    location: Location used to run custom jobs. If not specified the location used to run the pipeline will be used.
+    accelerator_type: One of 'TPU' or 'GPU'. If 'TPU' is specified, tuning components run in europe-west4. Otherwise tuning components run in us-central1 on GPUs. Default is 'GPU'.
+    location: Location used to run non-tuning components, i.e. components that do not require accelerators. If not specified the location used to run the pipeline will be used.
     tensorboard_resource_id: Optional tensorboard resource id in format `projects/{project_number}/locations/{location}/tensorboards/{tensorboard_id}`. If provided, tensorboard metrics will be uploaded to this location.
+    encryption_spec_key_name: Customer-managed encryption key. If this is set, then all resources created by the CustomJob will be encrypted with the provided encryption key. Note that this is not supported for TPU at the moment.
 
   Returns:
     output_model_path: Path to the trained model checkpoint.
@@ -82,16 +86,13 @@ def pipeline(
   # fmt: on
   prompt_column = 'input_text'
   machine_spec = function_based.resolve_machine_spec(
-      location=location, use_test_spec=env.get_use_test_machine_spec()
+      accelerator_type=accelerator_type,
+      use_test_spec=env.get_use_test_machine_spec(),
   ).set_display_name('Resolve Machine Spec')
 
   reference_model_metadata = function_based.resolve_reference_model_metadata(
       large_model_reference=large_model_reference,
   ).set_display_name('Resolve Model Metadata')
-
-  prompt_dataset_image_uri = function_based.resolve_private_image_uri(
-      image_name='text_importer'
-  ).set_display_name('Resolve Prompt Dataset Image URI')
 
   processed_dataset = preprocess_chat_dataset.preprocess_chat_dataset(
       large_model_reference=large_model_reference,
@@ -111,16 +112,14 @@ def pipeline(
           large_model_reference=reference_model_metadata.outputs[
               'large_model_reference'
           ],
-          image_uri=prompt_dataset_image_uri.output,
           instruction=instruction,
+          encryption_spec_key_name=encryption_spec_key_name,
       )
       .set_display_name('Import Prompt Dataset')
       .set_caching_options(False)
   )
-  rl_image_uri = function_based.resolve_private_image_uri(
-      image_name='reinforcer',
+  rl_image_uri = function_based.resolve_private_refined_image_uri(
       accelerator_type=machine_spec.outputs['accelerator_type'],
-      accelerator_count=machine_spec.outputs['accelerator_count'],
   ).set_display_name('Resolve Reinforcer Image URI')
   num_microbatches = function_based.resolve_num_microbatches(
       large_model_reference=reference_model_metadata.outputs[
@@ -130,7 +129,7 @@ def pipeline(
   rl_model = (
       reinforcer.reinforcer(
           project=project,
-          location=location,
+          location=machine_spec.outputs['tuning_location'],
           input_reference_model_path=reference_model_metadata.outputs[
               'reference_model_path'
           ],
@@ -159,26 +158,13 @@ def pipeline(
           lora_dim=lora_dim,
           reward_lora_dim=reward_lora_dim,
           num_microbatches=num_microbatches.output,
+          encryption_spec_key_name=encryption_spec_key_name,
+          tensorboard_resource_id=tensorboard_resource_id,
       )
       .set_display_name('Reinforcer')
       .set_caching_options(False)
   )
-  has_tensorboard_id = function_based.value_exists(
-      value=tensorboard_resource_id
-  ).set_display_name('Resolve Tensorboard Resource ID')
-  with kfp.dsl.Condition(  # pytype: disable=wrong-arg-types
-      has_tensorboard_id.output == True,  # pylint: disable=singleton-comparison, g-explicit-bool-comparison
-      name='Upload Reinforcement Learning Tensorboard Metrics',
-  ):
-    _ = upload_tensorboard_metrics.upload_tensorboard_metrics(
-        tensorboard_resource_id=tensorboard_resource_id,
-        metrics_directory=rl_model.outputs['tensorboard_metrics'],
-        experiment_name=(
-            'rl-model-tuner-'
-            f'{kfp.dsl.PIPELINE_JOB_ID_PLACEHOLDER}-'
-            f'{kfp.dsl.PIPELINE_TASK_ID_PLACEHOLDER}'
-        ),
-    ).set_display_name('Reinforcement Learning Tensorboard Metrics Uploader')
+
   return PipelineOutput(
       output_model_path=rl_model.outputs['output_model_path'],
       output_adapter_path=rl_model.outputs['output_adapter_path'],
