@@ -15,7 +15,9 @@
 package argocompiler
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	wfapi "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	"github.com/golang/protobuf/jsonpb"
@@ -26,11 +28,24 @@ import (
 )
 
 const (
-	volumeNameKFPLauncher = "kfp-launcher"
-	DefaultLauncherImage  = "gcr.io/ml-pipeline/kfp-launcher@sha256:c639c51cf19749922fe3f750968e7e32c2a418c73e30ddfd7162ba1a16bad0d0"
-	LauncherImageEnvVar   = "V2_LAUNCHER_IMAGE"
-	DefaultDriverImage    = "gcr.io/ml-pipeline/kfp-driver@sha256:f308b24f51df1165592563b1892fad50f9faaaf314b4ac0638e37aeee3aa8f2c"
-	DriverImageEnvVar     = "V2_DRIVER_IMAGE"
+	volumeNameKFPLauncher    = "kfp-launcher"
+	volumeNameCABundle       = "ca-bundle"
+	DefaultLauncherImage     = "gcr.io/ml-pipeline/kfp-launcher@sha256:8fe5e6e4718f20b021736022ad3741ddf2abd82aa58c86ae13e89736fdc3f08f"
+	LauncherImageEnvVar      = "V2_LAUNCHER_IMAGE"
+	DefaultDriverImage       = "gcr.io/ml-pipeline/kfp-driver@sha256:3c0665cd36aa87e4359a4c8b6271dcba5bdd817815cd0496ed12eb5dde5fd2ec"
+	DriverImageEnvVar        = "V2_DRIVER_IMAGE"
+	gcsScratchLocation       = "/gcs"
+	gcsScratchName           = "gcs-scratch"
+	s3ScratchLocation        = "/s3"
+	s3ScratchName            = "s3-scratch"
+	minioScratchLocation     = "/minio"
+	minioScratchName         = "minio-scratch"
+	dotLocalScratchLocation  = "/.local"
+	dotLocalScratchName      = "dot-local-scratch"
+	dotCacheScratchLocation  = "/.cache"
+	dotCacheScratchName      = "dot-cache-scratch"
+	dotConfigScratchLocation = "/.config"
+	dotConfigScratchName     = "dot-config-scratch"
 )
 
 func (c *workflowCompiler) Container(name string, component *pipelinespec.ComponentSpec, container *pipelinespec.PipelineDeploymentConfig_PipelineContainerSpec) error {
@@ -241,21 +256,61 @@ func (c *workflowCompiler) addContainerExecutorTemplate(refName string) string {
 		// args come from. It is treated as a strategic merge patch on
 		// top of the Pod spec.
 		PodSpecPatch: inputValue(paramPodSpecPatch),
-		Volumes: []k8score.Volume{{
-			Name: volumeNameKFPLauncher,
-			VolumeSource: k8score.VolumeSource{
-				EmptyDir: &k8score.EmptyDirVolumeSource{},
+		Volumes: []k8score.Volume{
+			{
+				Name: volumeNameKFPLauncher,
+				VolumeSource: k8score.VolumeSource{
+					EmptyDir: &k8score.EmptyDirVolumeSource{},
+				},
 			},
-		}},
+			{
+				Name: gcsScratchName,
+				VolumeSource: k8score.VolumeSource{
+					EmptyDir: &k8score.EmptyDirVolumeSource{},
+				},
+			},
+			{
+				Name: s3ScratchName,
+				VolumeSource: k8score.VolumeSource{
+					EmptyDir: &k8score.EmptyDirVolumeSource{},
+				},
+			},
+			{
+				Name: minioScratchName,
+				VolumeSource: k8score.VolumeSource{
+					EmptyDir: &k8score.EmptyDirVolumeSource{},
+				},
+			},
+			{
+				Name: dotLocalScratchName,
+				VolumeSource: k8score.VolumeSource{
+					EmptyDir: &k8score.EmptyDirVolumeSource{},
+				},
+			},
+			{
+				Name: dotCacheScratchName,
+				VolumeSource: k8score.VolumeSource{
+					EmptyDir: &k8score.EmptyDirVolumeSource{},
+				},
+			},
+			{
+				Name: dotConfigScratchName,
+				VolumeSource: k8score.VolumeSource{
+					EmptyDir: &k8score.EmptyDirVolumeSource{},
+				},
+			},
+		},
 		InitContainers: []wfapi.UserContainer{{
 			Container: k8score.Container{
 				Name:    "kfp-launcher",
 				Image:   GetLauncherImage(),
 				Command: []string{"launcher-v2", "--copy", component.KFPLauncherPath},
-				VolumeMounts: []k8score.VolumeMount{{
-					Name:      volumeNameKFPLauncher,
-					MountPath: component.VolumePathKFPLauncher,
-				}},
+				VolumeMounts: []k8score.VolumeMount{
+					{
+						Name:      volumeNameKFPLauncher,
+						MountPath: component.VolumePathKFPLauncher,
+					},
+				},
 				Resources: launcherResources,
 			},
 		}},
@@ -268,10 +323,36 @@ func (c *workflowCompiler) addContainerExecutorTemplate(refName string) string {
 			// These are added to pass argo workflows linting.
 			Image:   "gcr.io/ml-pipeline/should-be-overridden-during-runtime",
 			Command: []string{"should-be-overridden-during-runtime"},
-			VolumeMounts: []k8score.VolumeMount{{
-				Name:      volumeNameKFPLauncher,
-				MountPath: component.VolumePathKFPLauncher,
-			}},
+			VolumeMounts: []k8score.VolumeMount{
+				{
+					Name:      volumeNameKFPLauncher,
+					MountPath: component.VolumePathKFPLauncher,
+				},
+				{
+					Name:      gcsScratchName,
+					MountPath: gcsScratchLocation,
+				},
+				{
+					Name:      s3ScratchName,
+					MountPath: s3ScratchLocation,
+				},
+				{
+					Name:      minioScratchName,
+					MountPath: minioScratchLocation,
+				},
+				{
+					Name:      dotLocalScratchName,
+					MountPath: dotLocalScratchLocation,
+				},
+				{
+					Name:      dotCacheScratchName,
+					MountPath: dotCacheScratchLocation,
+				},
+				{
+					Name:      dotConfigScratchName,
+					MountPath: dotConfigScratchLocation,
+				},
+			},
 			EnvFrom: []k8score.EnvFromSource{metadataEnvFrom},
 			Env:     commonEnvs,
 		},
@@ -282,6 +363,59 @@ func (c *workflowCompiler) addContainerExecutorTemplate(refName string) string {
 		if err := jsonpb.UnmarshalString(kubernetesConfigString, k8sExecCfg); err == nil {
 			extendPodMetadata(&executor.Metadata, k8sExecCfg)
 		}
+	}
+	caBundleCfgMapName := os.Getenv("EXECUTOR_CABUNDLE_CONFIGMAP_NAME")
+	caBundleCfgMapKey := os.Getenv("EXECUTOR_CABUNDLE_CONFIGMAP_KEY")
+	caBundleMountPath := os.Getenv("EXECUTOR_CABUNDLE_MOUNTPATH")
+	if caBundleCfgMapName != "" && caBundleCfgMapKey != "" {
+		caFile := fmt.Sprintf("%s/%s", caBundleMountPath, caBundleCfgMapKey)
+		var certDirectories = []string{
+			caBundleMountPath,
+			"/etc/ssl/certs",
+			"/etc/pki/tls/certs",
+		}
+		// Add to REQUESTS_CA_BUNDLE for python request library.
+		executor.Container.Env = append(executor.Container.Env, k8score.EnvVar{
+			Name:  "REQUESTS_CA_BUNDLE",
+			Value: caFile,
+		})
+		// For AWS utilities like cli, and packages.
+		executor.Container.Env = append(executor.Container.Env, k8score.EnvVar{
+			Name:  "AWS_CA_BUNDLE",
+			Value: caFile,
+		})
+		// OpenSSL default cert file env variable.
+		// https://www.openssl.org/docs/man1.1.1/man3/SSL_CTX_set_default_verify_paths.html
+		executor.Container.Env = append(executor.Container.Env, k8score.EnvVar{
+			Name:  "SSL_CERT_FILE",
+			Value: caFile,
+		})
+		sslCertDir := strings.Join(certDirectories, ":")
+		executor.Container.Env = append(executor.Container.Env, k8score.EnvVar{
+			Name:  "SSL_CERT_DIR",
+			Value: sslCertDir,
+		})
+		volume := k8score.Volume{
+			Name: volumeNameCABundle,
+			VolumeSource: k8score.VolumeSource{
+				ConfigMap: &k8score.ConfigMapVolumeSource{
+					LocalObjectReference: k8score.LocalObjectReference{
+						Name: caBundleCfgMapName,
+					},
+				},
+			},
+		}
+
+		executor.Volumes = append(executor.Volumes, volume)
+
+		volumeMount := k8score.VolumeMount{
+			Name:      volumeNameCABundle,
+			MountPath: caFile,
+			SubPath:   caBundleCfgMapKey,
+		}
+
+		executor.Container.VolumeMounts = append(executor.Container.VolumeMounts, volumeMount)
+
 	}
 	c.templates[nameContainerImpl] = executor
 	c.wf.Spec.Templates = append(c.wf.Spec.Templates, *container, *executor)

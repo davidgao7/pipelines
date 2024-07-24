@@ -20,7 +20,7 @@ import setuptools
 NAME = 'kfp-kubernetes'
 REQUIREMENTS = [
     'protobuf>=4.21.1,<5',
-    'kfp>=2.6.0',
+    'kfp>=2.6.0,<3',
 ]
 DEV_REQUIREMENTS = [
     'docformatter==1.4',
@@ -76,7 +76,7 @@ setuptools.setup(
             'https://github.com/kubeflow/pipelines/tree/master/kubernetes_platform/python',
     },
     packages=setuptools.find_namespace_packages(include=['kfp.*']),
-    python_requires='>=3.7.0,<3.13.0',
+    python_requires='>=3.8.0,<3.13.0',
     install_requires=REQUIREMENTS,
     include_package_data=True,
     extras_require={

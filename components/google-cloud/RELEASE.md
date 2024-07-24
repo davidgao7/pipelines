@@ -1,5 +1,31 @@
 ## Upcoming release
-* Use larger base reward model when tuning `text` and `chat` variants of `bison@001` with the `preview.llm.rlhf_pipeline`.
+* Updated the Starry Net pipeline's template gallery description, and added dataprep_nan_threshold and dataprep_zero_threshold args to the Starry Net pipeline.
+* Fix bug in Starry Net's upload decomposition plot step due to protobuf upgrade, by pinning protobuf library to 3.20.*.
+* Bump Starry Net image tags.
+* In the Starry-Net pipeline, enforce that TF Record generation always runs before test set generation to speed up pipelines runs.
+* Add support for running tasks on a `PersistentResource` (see [CustomJobSpec](https://cloud.google.com/vertex-ai/docs/reference/rest/v1beta1/CustomJobSpec)) via `persistent_resource_id` parameter on `v1.custom_job.CustomTrainingJobOp` and `v1.custom_job.create_custom_training_job_from_component`
+* Bump image for Structured Data pipelines.
+* Add check that component in preview.custom_job.utils.create_custom_training_job_from_component doesn't have any parameters that share names with any custom job fields
+
+## Release 2.15.0
+* Add Gemini batch prediction support to `v1.model_evaluation.autosxs_pipeline`.
+* Add Starry Net forecasting pipeline to `preview.starry_net.starry_net_pipeline`
+* Apply latest GCPC image vulnerability resolutions (base OS and software updates).
+
+## Release 2.14.1
+* Add staging and temp location parameters to prophet trainer component.
+* Add input parameter `autorater_prompt_parameters` to `_implementation.llm.online_evaluation_pairwise` component.
+* Mitigate bug in `v1.model_evaluation.autosxs_pipeline` where batch prediction would fail the first time it is run in a project by retrying.
+* Apply latest GCPC image vulnerability resolutions (base OS and software updates).
+
+## Release 2.14.0
+* Use larger base reward model when tuning `text-bison@001`, `chat-bison@001` and `t5-xxl` with the `preview.llm.rlhf_pipeline`.
+* Move `preview.model_evaluation.autosxs_pipeline` to `v1.model_evaluation.autosxs_pipeline`.
+* Remove default prediction column names in `v1.model_evaluation.classification_component` component to fix pipeline errors when using bigquery data source.
+* Move `_implementation.model_evaluation.ModelImportEvaluationOp` component to preview namespace `preview.model_evaluation.ModelImportEvaluationOp`.
+* Drop support for Python 3.7 since it has reached end-of-life.
+* Expand number of regions supported by `preview.llm.rlhf_pipeline`.
+* Apply latest GCPC image vulnerability resolutions (base OS and software updates).
 
 ## Release 2.13.1
 * Fix model name preprocess error, pass correct model to `ModelImportEvaluationOp` component in `v1.model_evaluation.evaluation_llm_text_generation_pipeline` and `v1.model_evaluation.evaluation_llm_classification_pipeline`.
@@ -9,6 +35,8 @@
 * Add support for `text-bison@002` to `preview.llm.rlhf_pipeline`.
 * Apply latest GCPC image vulnerability resolutions (base OS and software updates).
 * Fix `preview.model_evaluation.autosxs_pipeline` documentation to show `autorater_prompt_parameters` as required.
+* Introduce placeholders: `SERVICE_ACCOUNT_PLACEHOLDER`, `NETWORK_PLACEHOLDER`, `PERSISTENT_RESOURCE_ID_PLACEHOLDER` and `ENCRYPTION_SPEC_KMS_KEY_NAME_PLACEHOLDER`
+* Use `PERSISTENT_RESOURCE_ID_PLACEHOLDER` as the default value of `persistent_resource_id` for `CustomTrainingJobOp` and `create_custom_training_job_op_from_component`. With this change, custom job created without explicitly setting `persistent_resource_id` will inherit job level `persistent_resource_id`, if Persistent Resource is set as job level runtime.
 
 ## Release 2.12.0
 * Log TensorBoard metrics from the `preview.llm.rlhf_pipeline` in real time.

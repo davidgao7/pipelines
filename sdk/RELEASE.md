@@ -7,7 +7,22 @@
 ## Deprecations
 
 ## Bug fixes and other changes
+
+## Documentation updates
+
+# 2.8.0
+
+## Features
+* Support dynamic machine type parameters in CustomTrainingJobOp. [\#10883](https://github.com/kubeflow/pipelines/pull/10883)
+
+## Breaking changes
+* Drop support for Python 3.7 since it has reached end-of-life. [\#10750](https://github.com/kubeflow/pipelines/pull/10750)
+
+## Deprecations
+
+## Bug fixes and other changes
 * Throw compilation error when trying to iterate over a single parameter with ParallelFor [\#10494](https://github.com/kubeflow/pipelines/pull/10494)
+* Add required auth scopes to RegistryClient for GCP service accounts credentials [#10819](https://github.com/kubeflow/pipelines/pull/10819)
 
 ## Documentation updates
 * Make full version dropdown visible on all KFP SDK docs versions [\#10577](https://github.com/kubeflow/pipelines/pull/10577)
